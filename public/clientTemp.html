@@ -1,0 +1,18 @@
+<html>
+<head>
+	<title>Video client</title>
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+	<script src="https://cdn.temasys.com.sg/adapterjs/0.12.x/adapter.min.js"></script>
+	<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+	<div id="callDiv">
+		<button id="status">Offline</button>
+		<input type="text" id="create_room" placeholder="Create a room name" >
+		<button id="create_room_click">create</button>
+		<input type="hidden" id="join_room" value="<%= roomName %>">
+	</div>
+	<script src='/socket.io/socket.io.js'></script>
+	<script src="videoclient.js"></script>
+</body>
+</html>

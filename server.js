@@ -1,25 +1,23 @@
-var path    = require("path"),
-	PORT = 8080,
-	ioInstances = [8080,8082],
-	express = require('express'),
-	http = require('http'),
-	bodyParser = require('body-parser'),
-	app = express(),
-	server = http.createServer(app),
-	io  = require('socket.io').listen(server),
-	redis = require('socket.io-redis')({host:'',port:6379}),
-	redisClient = redis.pubClient;
+var path 			= require("path"),
+	PORT 			= 8080,
+	express 		= require('express'),
+	http 			= require('http'),
+	bodyParser 		= require('body-parser'),
+	app 			= express(),
+	serveFile		= require('serve-static'),
+	fs 				= require('fs'),	
+	sslOptions 		= {key: fs.readFileSync('../ssl/key.pem'),cert: fs.readFileSync('../ssl/cert.pem')},
+	https  			= require('https'),
+	server 			= https.createServer(sslOptions,app),
+	io  			= require('socket.io').listen(server),
+	bodyParser 		= require('body-parser');
 
-io.adapter(redis);
-// PORT number is used as HASH name in redis, All new users will get mapped under this //
+// to reder html file with subs object
+app.set('views', __dirname + '/public');
+app.engine('html', require('ejs').renderFile);
 
-redisClient.on("ready", function () {
-    console.log("Redis ready.. ");
-    redisClient.del(PORT,function(err,res){ // clear any existing Hash map to this server
-    	console.log('Client list exist in redis : ',res)
-    	io.emit('serverMsg',"refresh");
-    });
-});
+app.use(serveFile('public'));
+app.set('view engine', 'ejs');
 
 var rooms = {}; // room to client id mapping
 var clients = {} // client  to room id mapping
@@ -28,19 +26,27 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.get('/clients', function (req, res){
 	res.send(Object.keys(io.sockets.connected));
 });
+app.get('/', function (req,res){
+	var renderObj = {};
+	if(req.query && req.query['room']){
+		renderObj.roomName = req.query['room'];
+	}else{
+		renderObj.roomName = "empty";
+	}
+	res.render('clientTemp.html',renderObj);
+});
+
 server.listen(PORT,function() {
     console.log("Listening on port " + PORT);
 });
 
 io.on('connection',function(socket){
 	console.log(socket.id,': -- new conn');
-	addClientsList(socket.id); // add this user to Clients list on redis
 	io.emit('contact',{peer_id: socket.id,type:"add"}); // Emit new user to online peers 
-	globalClientsList(socket) // Emit list on online peers to new user
 
 	socket.on('reqContactList',function (data){
 		console.log('reqContactList from : '+socket.id+ " : "+data);
-		globalClientsList(socket);
+		clientsList(socket);
 	});
 	socket.on('addRoom',function (data){
 		if (!(data.room_id in rooms)){ // Add new room name if it does not exist!
@@ -48,8 +54,8 @@ io.on('connection',function(socket){
 		}
 		rooms[data.room_id][data.socket_id] = socket; 
 		clients[data.socket_id] = data.room_id; // Mapping client to room name
-		// console.log('room json\n',rooms);
-		// console.log('clients json\n',clients);
+		console.log('room json\n',rooms);
+		console.log('clients json\n',clients);
 	});
 	socket.on('joinRoom',function (data){
 		if (!(data.room_id in rooms)){ // Add new room name if it does not exist!
@@ -58,14 +64,14 @@ io.on('connection',function(socket){
 			clients[data.socket_id] = data.room_id; // Mapping client to room name
 			for(id in rooms[data.room_id]){
 				// Send join mesage and addPeer to members in this room
-				// io.to(id).emit('serverMsg',data.socket_id+" joined your room");
+				io.to(id).emit('serverMsg',data.socket_id+" joined your room");
 	            io.to(id).emit('addPeer', {'peer_id': socket.id, 'createOffer': false});
 	            socket.emit('addPeer', {'peer_id': id, 'createOffer': true});		
 			}
 			rooms[data.room_id][data.socket_id] = socket;
 		}
 		// console.log('room json\n',rooms);
-		// console.log('clients json\n',clients);
+		console.log('clients json\n',clients);
 	});
     socket.on('relayICECandidate', function(config) {
         var peer_id = config.peer_id;
@@ -87,9 +93,6 @@ io.on('connection',function(socket){
 	socket.on('disconnect',function (){
 		console.log(socket.id,': --client disconnected');
 		io.emit('contact',{peer_id: socket.id,type:"remove"});
-		redisClient.HDEL(PORT,socket.id,function (err,res){
-			if(err) console.log(err)
-		});
 		var socket_room = clients[socket.id];
 		for(id in rooms[socket_room]){
 			io.to(id).emit('removePeer',socket.id);	
@@ -106,23 +109,10 @@ io.on('connection',function(socket){
 	});
 });
 
-function globalClientsList(socket){ // will return room name or undefined
-	for(var i=0; i< ioInstances.length;i++){
-		redisClient.HVALS(ioInstances[i],function (err,res){
-			if(err) console.log(err);
-			socket.emit('onlineContacts',{"peer_id":res}); // res is array Obj
-		});
-	}
-}
 function clientsList(socket){
 	for(key in io.sockets.adapter.rooms){
 		if(!key.match("room_")){ // all our rooms name will be created with prefix string "room_"
 			socket.emit('onlineContacts',{"peer_id":key});
 		}
 	}
-}
-function addClientsList(peer_id){
-	redisClient.HSET(PORT, peer_id, peer_id,function (err,res){  // HSET(hash field "value")
-		if(err) console.log(err);
-	});
 }
